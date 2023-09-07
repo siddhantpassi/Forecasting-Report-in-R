@@ -1,0 +1,180 @@
+---
+output: html_document
+fontsize: 10
+---
+# Forecasting Report
+
+*Note: 4 out of the 10 time series data failed the Phillips-Perron test of stationarity (p-value > 0.01). But we continue using these time series data sets in our competition to avoid loss of information.*
+
+How the **competition** was designed:  
+
+* To **compare** the three methods across the 10 different instances of the time series data in terms of **bias, coverage and average width of confidence interval**, we first defined a function where we input the time series data (*length = n*) and the lag (*h*) at which we want to forecast the time series data.  
+* Withing the function, this data is split into training (*length = n-h*) and testing (*length = h*) sets. The three methods of forecasting are then fit on to the training set and using these models, the next “h” values are predicted and accordingly the bias, coverage and average width are calculated.  
+* This function returns a data set with the columns: **Methods** (*Exponential Smoothing, ARMA(10,10) and auto.arima*), **Coverage**(of all *h* values), **Bias**, and **Average Width**.  
+* This function is **iterated** through **all** the **time series datasets** and the **lag values** to create a metadata set with columns: Methods, Coverage, Bias, Average_Width, **TS_Data** (1-10) and **LAG**(h=1,2,10).  
+
+Using this metadata set we find out the following results. *(These results are averaged over all the datasets)* 
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE, cache=TRUE}
+#install.packages("forecast")
+library(forecast)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+projectdata <- readRDS("projectdata.rds")
+
+#Formal Check for Stationarity
+
+# A time series is stationary if it has a "unit root". 
+# We can check that using Phillips-Perron Test
+#Check if pvalue <=0.01
+
+stationary_test <- function(projectdata){
+  n = length(projectdata)
+  check = rep(NA, n)
+  for(i in 1:n){
+    if(PP.test(projectdata[[i]])$p.value <= 0.01)
+      check[i] = TRUE
+    else
+      check[i] = FALSE
+  }
+  kable(data.frame(TSDataset = 1:10,
+                  Stationary = check))
+}
+
+ts1 <- projectdata[[1]]
+
+
+check_coverage<- function(time_series, h){
+  
+  #Splitting the time series data 
+  n <- length(time_series)
+  train <- head(time_series, n - h)
+  test <- tail(time_series, h)
+  
+  
+  #Fitting the models to the training data
+  Exp_Sm_Model <- smooth(train)
+  ARMA_model <- arima(train, order = c(10, 0, 10), method = "CSS")
+  Auto_Arima_Model <- auto.arima(train, ic = "aic")
+  
+  #Getting the forecasts
+  Exp_Sm_Forecast <- forecast(Exp_Sm_Model, h, level = 0.95)
+  ARMA_Forecast <- forecast(ARMA_model, h, level = 0.95)
+  Auto_Arima_Forecast <- forecast(Auto_Arima_Model, h, level = 0.95)
+  
+  
+  #Checking Coverage
+  
+  if(h>1){
+    check_Exp <- mean((Exp_Sm_Forecast$upper > test)&
+                        (Exp_Sm_Forecast$lower < test))
+    check_ARMA <- mean((ARMA_Forecast$upper > test)&
+                        (ARMA_Forecast$lower < test))
+    check_Auto <- mean((Auto_Arima_Forecast$upper > test)&
+                        (Auto_Arima_Forecast$lower < test))
+  }else{
+    
+    check_Exp <- as.numeric((Exp_Sm_Forecast$upper > as.data.frame(test))&
+                        (Exp_Sm_Forecast$lower < as.data.frame(test)))
+    check_ARMA <- as.numeric((ARMA_Forecast$upper > as.data.frame(test))&
+                         (ARMA_Forecast$lower < as.data.frame(test)))
+    check_Auto <- as.numeric((Auto_Arima_Forecast$upper > as.data.frame(test))&
+                         (Auto_Arima_Forecast$lower < as.data.frame(test)))
+    
+  }  
+  #Checking Bias
+  bias_Exp <- mean(((as.data.frame(Exp_Sm_Forecast)$'Point Forecast'/test) - 1))
+  bias_ARMA <- mean(((as.data.frame(ARMA_Forecast)$'Point Forecast'/test) - 1))
+  bias_Auto <- mean(((as.data.frame(Auto_Arima_Forecast)$'Point Forecast'/test)
+                     - 1))
+  
+  #Checking Average Width of Interval
+  
+  width_Exp <- mean(abs(Exp_Sm_Forecast$upper - Exp_Sm_Forecast$lower))
+  width_ARMA <- mean(abs(ARMA_Forecast$upper - ARMA_Forecast$lower))
+  width_Auto <- mean(abs(Auto_Arima_Forecast$upper - Auto_Arima_Forecast$lower))
+  
+  #Creating Table
+  my_results <- data.frame(Methods = c("Exponential Smoothing", "ARMA(10,10)",
+                             "auto.arima"),
+                           Coverage = c(check_Exp, check_ARMA, check_Auto),
+                           Bias = c(bias_Exp, bias_ARMA, bias_Auto),
+                           Average_Width = c(width_Exp, width_ARMA, width_Auto))
+  
+  kable(my_results)
+  return(my_results)
+
+}
+
+
+compare_ts <- function(proj_data, h){
+  main_table = data.frame()
+  for(i in 1:10){
+    ts = proj_data[[i]]
+    result_table = check_coverage(ts, h)
+    result_table$TS_Data = i
+    result_table$LAG =h
+    
+    main_table = rbind(main_table, result_table)
+  }
+  #kable(main_table)
+  return(main_table)
+}
+
+```
+
+
+* For lag value, h = 1, auto.arima has the best performance in terms of *Coverage (1.00)* and *Bias (-0.29)* whereas exponential smoothing has the best performance in terms of *Average Width (2.14)*. Overall, **auto.arima** works best for h = 1. 
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+
+# overall_table = data.frame()
+#for(i in c(1,2,10)){
+#  overall_table = rbind(overall_table, compare_ts(projectdata, i))
+#}
+
+
+LAG_1_table = compare_ts(proj_data = projectdata, 1)
+
+Lag_1_summary = summarize(group_by(LAG_1_table, Methods), 
+                          MeanCoverage = mean(Coverage), 
+                          MeanBias = mean(Bias), 
+                          MeanWidth = mean(Average_Width))
+kable(Lag_1_summary)
+
+```
+
+
+* For lag value, h= 2, auto.arima has the best performance in terms of *Coverage (1.00)* and *Bias (-0.69)* whereas exponential smoothing has the best performance in terms of *Average Width (2.79)*. Overall, **auto.arima** works best for h = 2. 
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+LAG_2_table = compare_ts(proj_data = projectdata, 2)
+
+Lag_2_summary = summarize(group_by(LAG_2_table, Methods), 
+                          MeanCoverage = mean(Coverage), 
+                          MeanBias = mean(Bias), 
+                          MeanWidth = mean(Average_Width))
+kable(Lag_2_summary)
+```
+
+
+* For lag value, h= 10, auto.arima has the best performance in terms of *Coverage (0.96)*, while Exponential smoothing does in terms of *Bias (-.33)* and ARMA(10,10) in terms of *Average Width (5.89)*.  Overall, ARMA(10,10) did better than other methods for h = 10.  
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+
+LAG_10_table = compare_ts(proj_data = projectdata, 10)
+
+Lag_10_summary = summarize(group_by(LAG_10_table, Methods), 
+                          MeanCoverage = mean(Coverage), 
+                          MeanBias = mean(Bias), 
+                          MeanWidth = mean(Average_Width))
+kable(Lag_10_summary)
+```
+
+
+We see that **auto.arima** works fairly well in all the cases, so we can conclude that auto.arima is the optimal method out of the three.
+
